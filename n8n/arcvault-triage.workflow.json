@@ -1,0 +1,258 @@
+{
+  "name": "ArcVault — AI Intake & Triage",
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "arcvault-triage",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "node-webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        320
+      ],
+      "webhookId": "arcvault-triage-webhook"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const body = $json.body ?? $json;\nconst SYSTEM = \"You are the intake triage agent for ArcVault, a B2B software company.\\nYou read a single inbound customer message and return a strict JSON object.\\nYou classify and extract only — you do NOT decide routing or escalation.\\n\\nCATEGORIES (choose exactly one) — Bug Report, Feature Request, Billing Issue, Technical Question, Incident/Outage:\\n- \\\"Bug Report\\\": the product is broken or behaving incorrectly for this customer\\n  (errors, a feature not working as intended). Usually affects one account.\\n- \\\"Feature Request\\\": a suggestion or ask for new/enhanced functionality that does\\n  not exist yet. Nothing is broken.\\n- \\\"Billing Issue\\\": questions or disputes about invoices, charges, pricing,\\n  payments, or refunds.\\n- \\\"Technical Question\\\": a \\\"how do I / is it possible / are we able to\\\" question\\n  about using, configuring, integrating, or evaluating the product. This INCLUDES\\n  pre-sales and evaluation questions. Nothing is reported as broken.\\n- \\\"Incident/Outage\\\": the product is unavailable or degraded as a service problem,\\n  typically affecting multiple users or described as \\\"down\\\", \\\"outage\\\", or \\\"on your end\\\".\\n\\nPRIORITY (choose exactly one) — Low, Medium, High:\\n- \\\"High\\\": customer is fully blocked (e.g. cannot log in at all), an active outage,\\n  many users affected, a security/auth problem, data loss, or large financial impact.\\n- \\\"Medium\\\": a real problem for one customer that is not fully blocking; most billing\\n  disputes; single-user issues with a workaround.\\n- \\\"Low\\\": no time pressure — feature ideas, general questions, evaluations.\\n\\nCONFIDENCE (0.0-1.0): report your GENUINE certainty in the CATEGORY.\\n- Use 0.90+ only when the category is unmistakable.\\n- Lower it (roughly 0.50-0.70) when the message is vague, fits two categories, is a\\n  pre-sales/evaluation question, or hedges (e.g. \\\"not sure if this is the right place\\\").\\n- Do not inflate confidence. A calibrated 0.6 is more useful than a false 0.95.\\n\\nENRICHMENT:\\n- \\\"core_issue\\\": the single core issue in ONE sentence.\\n- \\\"identifiers\\\": pull any that appear, else null.\\n  - \\\"account\\\": account handle/URL/username if present.\\n  - \\\"invoice_number\\\": digits only, no \\\"#\\\".\\n  - \\\"error_code\\\": e.g. \\\"403\\\".\\n  - \\\"amount\\\": the disputed/referenced charge as a NUMBER (strip \\\"$\\\" and commas).\\n  - \\\"expected_amount\\\": the amount the customer says they expected (e.g. contract rate).\\n  - \\\"other\\\": array of any other useful identifiers (may be empty).\\n- \\\"urgency_signal\\\": one short phrase on why this is or isn't urgent, grounded in the text.\\n\\nSUMMARY:\\n- \\\"summary\\\": 2-3 plain-language sentences for the receiving team. Say what is being\\n  asked, name key identifiers, and note any urgency. No greetings, no fluff.\\n\\nOUTPUT: return ONLY a JSON object with EXACTLY these keys and no others:\\n{\\n  \\\"category\\\": <one of the categories>,\\n  \\\"priority\\\": <one of the priorities>,\\n  \\\"confidence\\\": <number 0.0-1.0>,\\n  \\\"core_issue\\\": <string>,\\n  \\\"identifiers\\\": { \\\"account\\\": <string|null>, \\\"invoice_number\\\": <string|null>,\\n                   \\\"error_code\\\": <string|null>, \\\"amount\\\": <number|null>,\\n                   \\\"expected_amount\\\": <number|null>, \\\"other\\\": <string[]> },\\n  \\\"urgency_signal\\\": <string>,\\n  \\\"summary\\\": <string>\\n}\\nDo not include markdown, code fences, or commentary. JSON only.\";\nconst user = 'Source: ' + body.source + '\\nReceived: ' + body.received_at +\n  '\\nMessage:\\n\"\"\"\\n' + body.raw_message + '\\n\"\"\"\\n\\nReturn the JSON object now.';\nreturn { model: \"llama-3.3-70b-versatile\", messages: [\n  { role: 'system', content: SYSTEM },\n  { role: 'user', content: user },\n] };"
+      },
+      "id": "node-build",
+      "name": "Build LLM request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"model\": $json.model, \"temperature\": 0.1, \"response_format\": { \"type\": \"json_object\" }, \"messages\": $json.messages } }}",
+        "options": {}
+      },
+      "id": "node-llm",
+      "name": "Call LLM (Groq)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        680,
+        320
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_CRED_ID",
+          "name": "Groq Header Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const resp = $json;\nconst content = (resp.choices && resp.choices[0] && resp.choices[0].message && resp.choices[0].message.content) || '{}';\nconst llm = JSON.parse(content);\nconst inbound = $('Webhook').item.json.body;\n\nconst CONFIDENCE_THRESHOLD = 0.7;\nconst BILLING_ESCALATION_USD = 500;\nconst CATEGORY_TO_QUEUE = { 'Bug Report':'Engineering','Incident/Outage':'Engineering','Feature Request':'Product','Billing Issue':'Billing','Technical Question':'IT/Security' };\nconst OUTAGE_PATTERNS = [/\\boutage\\b/i,/down for (all|everyone)/i,/multiple users affected/i,/\\ball users\\b/i];\n\nconst id = llm.identifiers || {};\nconst reasons = [];\nif (llm.confidence < CONFIDENCE_THRESHOLD) reasons.push('Low classification confidence (' + Number(llm.confidence).toFixed(2) + ' < ' + CONFIDENCE_THRESHOLD + ').');\nif (llm.category === 'Incident/Outage') reasons.push('Classified as Incident/Outage — outages always need a human.');\nconst hit = OUTAGE_PATTERNS.find(function (re) { return re.test(inbound.raw_message); });\nif (hit) reasons.push('Matched outage/incident keyword: \"' + inbound.raw_message.match(hit)[0] + '\".');\nif (id.amount != null && id.expected_amount != null) {\n  const disc = Math.abs(id.amount - id.expected_amount);\n  if (disc > BILLING_ESCALATION_USD) reasons.push('Billing discrepancy $' + disc + ' exceeds $' + BILLING_ESCALATION_USD + '.');\n}\nconst flagged = reasons.length > 0;\nconst primary = CATEGORY_TO_QUEUE[llm.category];\n\nreturn {\n  id: inbound.id, source: inbound.source, received_at: inbound.received_at,\n  category: llm.category, priority: llm.priority, confidence: llm.confidence,\n  primary_queue: primary, final_destination: flagged ? 'Escalation' : primary,\n  escalation_flag: flagged ? 'YES' : 'no', escalation_reasons: reasons.join(' | '),\n  core_issue: llm.core_issue, account: id.account || '', invoice_number: id.invoice_number || '',\n  error_code: id.error_code || '', amount: id.amount != null ? id.amount : '',\n  expected_amount: id.expected_amount != null ? id.expected_amount : '',\n  other: (id.other || []).join(', '), urgency_signal: llm.urgency_signal, summary: llm.summary,\n  provider: \"groq\", model: \"llama-3.3-70b-versatile\", raw_message: inbound.raw_message,\n};"
+      },
+      "id": "node-decide",
+      "name": "Decide & assemble",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_YOUR_SPREADSHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Triage",
+          "mode": "name",
+          "cachedResultName": "Triage"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "node-sheet-triage",
+      "name": "Append to Triage",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1120,
+        320
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_CRED_ID",
+          "name": "Google Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "cond-escalated",
+              "leftValue": "={{ $json.escalation_flag }}",
+              "rightValue": "YES",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-if",
+      "name": "Is escalated?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_YOUR_SPREADSHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Escalation",
+          "mode": "name",
+          "cachedResultName": "Escalation"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "node-sheet-esc",
+      "name": "Append to Escalation",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1560,
+        200
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_CRED_ID",
+          "name": "Google Service Account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Build LLM request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build LLM request": {
+      "main": [
+        [
+          {
+            "node": "Call LLM (Groq)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call LLM (Groq)": {
+      "main": [
+        [
+          {
+            "node": "Decide & assemble",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decide & assemble": {
+      "main": [
+        [
+          {
+            "node": "Append to Triage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append to Triage": {
+      "main": [
+        [
+          {
+            "node": "Is escalated?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is escalated?": {
+      "main": [
+        [
+          {
+            "node": "Append to Escalation",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  }
+}
