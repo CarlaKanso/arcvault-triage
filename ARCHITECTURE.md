@@ -105,20 +105,6 @@ keyword/category and billing rules are the reliable safety net. (Full log: RESUL
   escalation queue, and build a labelled eval set so prompt/threshold changes are
   measured, not guessed. Add drift alerts on category mix and escalation rate.
 
-## Phase 2 (one more week)
-
-1. **Agreement-based confidence.** Use the existing `compare` mode in the hot path:
-   escalate on *model disagreement*, a better-calibrated uncertainty signal than
-   self-reported confidence.
-2. **Evaluation harness.** A labelled fixture set + CI check on classification
-   accuracy and routing correctness, so prompts can't silently regress.
-3. **Reply drafting.** For high-confidence, low-risk categories, draft a suggested
-   first response for the agent to approve — the next automation step after routing.
-4. **Feedback loop.** Capture human re-routes from the Escalation queue and feed
-   them back as few-shot examples / threshold tuning.
-5. **Richer entity extraction + dedup.** Link messages to accounts/invoices in the
-   CRM and detect duplicate reports of the same outage.
-
 ## Tooling choices
 
 - **TypeScript + Node** for the engine: strong typing on the record shape (Zod

@@ -157,8 +157,6 @@ swap the URL/model/key in `scripts/build-n8n.ts` to target OpenAI or any other.
 | 4.2 Structured output | `output/records.json`, `output/escalation.json`, Google Sheet |
 | 4.3 Prompt documentation | [`prompts.md`](prompts.md) |
 | 4.4 Architecture write-up | [`ARCHITECTURE.md`](ARCHITECTURE.md) |
-| Design spec (decisions) | [`DESIGN.md`](DESIGN.md) |
-| Live run log (what broke + fixes) | [`RESULTS.md`](RESULTS.md) |
 
 ## Repo layout
 
